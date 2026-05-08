@@ -1,0 +1,377 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  Menu, 
+  X, 
+  FileSpreadsheet, 
+  ChevronRight, 
+  RefreshCw, 
+  AlertCircle,
+  Filter,
+  PieChart,
+  Table as TableIcon,
+  BarChart3,
+  TrendingUp,
+  DollarSign
+} from 'lucide-react';
+
+const GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRbXX2KrVtMfK6YO25OQDgvNv48jmfIXoQKq6weldXEBCPBzM6XQGR1F879lAueQOCghdhxOPZ2xj0E/pub?gid=0&single=true&output=csv";
+
+// Column Index Mapping
+const COL = {
+  A: 0, // Supply Name
+  C: 2, // Name
+  G: 6, // Month
+  K: 10, // Count/Value Column
+  T: 19, // GMV
+  V: 21, // Margin
+  AD: 29, // Status Column
+  AL: 37 // Category Headers (Commerce, Capital, Known, Part Load)
+};
+
+const REQUESTED_COLUMNS = [2, 10, 11, 12, 13, 14, 18, 19, 20, 27, 29];
+
+const NebulaBackground = () => (
+  <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none bg-[#020617]">
+    {/* Animated Nebula Clouds */}
+    <div className="absolute top-[-10%] left-[-10%] w-[70%] h-[70%] bg-purple-600/20 blur-[140px] rounded-full animate-nebula-slow" />
+    <div className="absolute bottom-[-10%] right-[-10%] w-[80%] h-[80%] bg-blue-600/15 blur-[140px] rounded-full animate-nebula-medium" />
+    <div className="absolute top-[30%] right-[5%] w-[50%] h-[50%] bg-pink-600/15 blur-[140px] rounded-full animate-nebula-fast" />
+    
+    {/* Star field overlay */}
+    <div className="absolute inset-0 opacity-40" 
+         style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(255,255,255,0.4) 1px, transparent 0)', backgroundSize: '60px 60px' }} />
+    <div className="absolute inset-0 opacity-20" 
+         style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, rgba(255,255,255,0.3) 1px, transparent 0)', backgroundSize: '120px 120px' }} />
+  </div>
+);
+
+const App = () => {
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [activeTab, setActiveTab] = useState('overview'); 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState('All');
+  const [selectedSupply, setSelectedSupply] = useState('All');
+  const [data, setData] = useState([]);
+  const [headers, setHeaders] = useState([]);
+  const [dynamicMonths, setDynamicMonths] = useState(['All']);
+  const [dynamicSupplyValues, setDynamicSupplyValues] = useState(['All']);
+  const [error, setError] = useState(null);
+
+  const fetchData = async (retries = 5, delay = 1000) => {
+    try {
+      setIsRefreshing(true);
+      const response = await fetch(GOOGLE_SHEET_CSV_URL);
+      if (!response.ok) throw new Error('Failed to fetch data');
+      
+      const csvText = await response.text();
+      const lines = csvText.split('\n').map(line => line.trim()).filter(line => line !== "");
+      if (lines.length < 1) return;
+
+      const rawRows = lines.map(line => {
+        return line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(v => v.trim().replace(/"/g, ''));
+      });
+
+      const currentHeaders = rawRows[0];
+      setHeaders(currentHeaders);
+
+      const parsedData = rawRows.slice(1)
+        .filter(row => {
+          const status = (row[COL.AD] || '').toLowerCase().trim();
+          return status === 'closed';
+        })
+        .map((row, rowIndex) => {
+          const item = { id: rowIndex };
+          row.forEach((cell, i) => {
+            item[`col_${i}`] = cell;
+          });
+          return item;
+        });
+
+      const uniqueMonths = new Set();
+      const uniqueSupply = new Set();
+      
+      parsedData.forEach(row => {
+        const monthVal = row[`col_${COL.G}`];
+        if (monthVal && monthVal.trim() !== "") uniqueMonths.add(monthVal);
+        const supplyVal = row[`col_${COL.A}`];
+        if (supplyVal && supplyVal.trim() !== "") uniqueSupply.add(supplyVal);
+      });
+
+      setDynamicMonths(['All', ...Array.from(uniqueMonths).sort()]);
+      setDynamicSupplyValues(['All', ...Array.from(uniqueSupply).sort()]);
+      setData(parsedData);
+      setError(null);
+    } catch (err) {
+      if (retries > 0) {
+        setTimeout(() => fetchData(retries - 1, delay * 2), delay);
+      } else {
+        setError("Sync error. Please check connection.");
+      }
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const filteredData = useMemo(() => {
+    return data.filter(row => {
+      const matchMonth = selectedMonth === 'All' || row[`col_${COL.G}`] === selectedMonth;
+      const matchSupply = selectedSupply === 'All' || row[`col_${COL.A}`] === selectedSupply;
+      return matchMonth && matchSupply;
+    });
+  }, [data, selectedMonth, selectedSupply]);
+
+  const analytics = useMemo(() => {
+    const groups = {};
+    
+    filteredData.forEach(row => {
+      const nameKey = row[`col_${COL.C}`] || 'Unknown Entity';
+      const categoryVal = (row[`col_${COL.AL}`] || '').toLowerCase();
+      
+      const parseNum = (val) => {
+        if (!val || val === '-') return 0;
+        const clean = val.replace(/[^0-9.-]+/g, "");
+        return parseFloat(clean) || 0;
+      };
+
+      const gmvValue = parseNum(row[`col_${COL.T}`]);
+      const marginValue = parseNum(row[`col_${COL.V}`]);
+
+      if (!groups[nameKey]) {
+        groups[nameKey] = { 
+          name: nameKey,
+          gmv: 0,
+          margin: 0,
+          commerce: 0,
+          capital: 0,
+          known: 0,
+          partLoad: 0
+        };
+      }
+
+      groups[nameKey].gmv += gmvValue;
+      groups[nameKey].margin += marginValue;
+
+      if (categoryVal.includes('commerce')) groups[nameKey].commerce += 1;
+      if (categoryVal.includes('capital')) groups[nameKey].capital += 1;
+      if (categoryVal.includes('known')) groups[nameKey].known += 1;
+      if (categoryVal.includes('part load')) groups[nameKey].partLoad += 1;
+    });
+
+    return { sortedByGMV: Object.values(groups).sort((a, b) => b.gmv - a.gmv) };
+  }, [filteredData]);
+
+  const formatCurrency = (num) => {
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      maximumFractionDigits: 0
+    }).format(num);
+  };
+
+  // Shared Glassmorphism styles
+  const glassStyle = "bg-white/10 backdrop-blur-xl border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.4)]";
+  const headerGlassStyle = "bg-white/5 backdrop-blur-2xl border-b border-white/5";
+
+  return (
+    <div className="min-h-screen relative flex text-white font-sans text-[14px]">
+      <NebulaBackground />
+
+      {/* Sidebar - Sleek Dark/Translucent */}
+      <aside className={`${isSidebarOpen ? 'w-64' : 'w-20'} bg-black/40 backdrop-blur-2xl border-r border-white/5 transition-all duration-500 flex flex-col fixed h-full z-30`}>
+        <div className="p-6 flex items-center gap-3">
+          <div className="bg-indigo-500/80 p-2 rounded-lg text-white shadow-lg shadow-indigo-500/20">
+            <FileSpreadsheet size={24} />
+          </div>
+          {isSidebarOpen && <span className="font-bold text-xl tracking-tight text-white drop-shadow-md">GMV Tracker</span>}
+        </div>
+
+        <nav className="flex-1 px-4 space-y-2 mt-4">
+          <button onClick={() => setActiveTab('overview')} className={`w-full flex items-center gap-4 p-3 rounded-xl transition-all duration-300 ${activeTab === 'overview' ? 'bg-white/20 text-white shadow-inner border border-white/20' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+            <TableIcon size={20} />
+            {isSidebarOpen && <span className="font-semibold">Data Table</span>}
+          </button>
+          <button onClick={() => setActiveTab('reports')} className={`w-full flex items-center gap-4 p-3 rounded-xl transition-all duration-300 ${activeTab === 'reports' ? 'bg-white/20 text-white shadow-inner border border-white/20' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}>
+            <PieChart size={20} />
+            {isSidebarOpen && <span className="font-semibold">Analytics</span>}
+          </button>
+        </nav>
+
+        <div className="p-4 border-t border-white/5">
+          <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="w-full flex items-center justify-center p-2 rounded-lg text-slate-500 hover:bg-white/10 hover:text-white transition-colors">
+            {isSidebarOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
+        </div>
+      </aside>
+
+      <main className={`flex-1 transition-all duration-500 relative z-10 ${isSidebarOpen ? 'ml-64' : 'ml-20'}`}>
+        <header className={`${headerGlassStyle} sticky top-0 z-20 px-8 py-5 flex items-center justify-between`}>
+          <div className="flex items-center gap-3">
+            <h1 className="text-lg font-black text-white uppercase tracking-widest drop-shadow-lg">
+                {activeTab === 'overview' ? 'Operational Records' : 'Financial Performance'}
+            </h1>
+            <div className="flex items-center gap-2 px-3 py-1 bg-emerald-500/20 border border-emerald-500/30 rounded-full">
+              <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
+              <span className="text-emerald-400 text-[10px] font-black uppercase tracking-tighter">Status: Closed</span>
+            </div>
+          </div>
+          <button onClick={() => fetchData()} disabled={isRefreshing} className="p-2.5 bg-white/5 border border-white/10 rounded-xl text-white hover:bg-white/20 transition-all hover:scale-105 active:scale-95 shadow-lg">
+            <RefreshCw size={18} className={`${isRefreshing ? 'animate-spin text-indigo-400' : ''}`} />
+          </button>
+        </header>
+
+        <div className="p-8 space-y-8">
+          {/* Transparent Glass Filters */}
+          <div className={`${glassStyle} flex flex-wrap gap-4 items-center p-5 rounded-2xl`}>
+             <div className="relative min-w-[200px]">
+                <label className="absolute -top-2 left-3 bg-[#1e1b4b] px-1.5 text-[10px] font-black text-indigo-300 uppercase tracking-widest z-10 rounded border border-white/5">Month</label>
+                <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className="w-full pl-3 pr-8 py-3 bg-white/5 border border-white/10 rounded-xl text-white font-bold appearance-none cursor-pointer focus:ring-2 focus:ring-indigo-500/50 outline-none hover:bg-white/10 transition-colors">
+                  {dynamicMonths.map(m => <option key={m} value={m} className="bg-slate-900 text-white">{m}</option>)}
+                </select>
+                <ChevronRight size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 rotate-90" />
+             </div>
+             <div className="relative min-w-[250px]">
+                <label className="absolute -top-2 left-3 bg-[#1e1b4b] px-1.5 text-[10px] font-black text-indigo-300 uppercase tracking-widest z-10 rounded border border-white/5">Supply Source</label>
+                <select value={selectedSupply} onChange={(e) => setSelectedSupply(e.target.value)} className="w-full pl-3 pr-8 py-3 bg-white/5 border border-white/10 rounded-xl text-white font-bold appearance-none cursor-pointer focus:ring-2 focus:ring-indigo-500/50 outline-none hover:bg-white/10 transition-colors">
+                  {dynamicSupplyValues.map(v => <option key={v} value={v} className="bg-slate-900 text-white">{v}</option>)}
+                </select>
+                <ChevronRight size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 rotate-90" />
+             </div>
+             <div className="ml-auto px-5 py-3 bg-indigo-500/30 border border-white/20 rounded-xl flex items-center gap-3 shadow-lg">
+                <Filter size={16} className="text-indigo-300" />
+                <span className="text-[12px] font-black uppercase tracking-widest">{filteredData.length} Records</span>
+             </div>
+          </div>
+
+          {activeTab === 'overview' && (
+            <div className={`${glassStyle} rounded-2xl overflow-hidden`}>
+              <div className="overflow-x-auto custom-scrollbar">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-white/5 border-b border-white/10">
+                      {REQUESTED_COLUMNS.map(colIndex => (
+                        <th key={colIndex} className="px-5 py-4 text-[11px] font-black text-indigo-200 uppercase tracking-widest">
+                          {headers[colIndex] || `Col ${colIndex}`}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {filteredData.map((row) => (
+                      <tr key={row.id} className="hover:bg-white/5 transition-colors">
+                        {REQUESTED_COLUMNS.map(colIndex => (
+                          <td key={colIndex} className="px-5 py-4 text-white font-medium whitespace-nowrap opacity-90">
+                            {row[`col_${colIndex}`] || '-'}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'reports' && (
+            <div className="w-full space-y-6">
+              <div className={`${glassStyle} rounded-3xl overflow-hidden min-h-[600px] flex flex-col`}>
+                <div className="p-8 border-b border-white/5 flex items-center gap-5">
+                    <div className="bg-gradient-to-br from-indigo-500 to-purple-500 p-3 rounded-2xl text-white shadow-xl">
+                        <TrendingUp size={28} />
+                    </div>
+                    <div>
+                        <h3 className="text-white font-black uppercase tracking-[0.2em] text-base drop-shadow-md">Entity Performance Matrix</h3>
+                        <p className="text-indigo-200/60 text-[10px] font-black uppercase tracking-widest mt-1">Real-time Financial Aggregation</p>
+                    </div>
+                </div>
+
+                <div className="flex-1 overflow-x-auto custom-scrollbar">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-white/5">
+                      <tr className="border-b border-white/10">
+                        <th className="px-8 py-6 text-[11px] font-black text-indigo-100 uppercase tracking-[0.2em] min-w-[200px]">Entity Name</th>
+                        <th className="px-4 py-6 text-[10px] font-black text-indigo-300 uppercase tracking-widest text-center">Commerce</th>
+                        <th className="px-4 py-6 text-[10px] font-black text-indigo-300 uppercase tracking-widest text-center">Capital</th>
+                        <th className="px-4 py-6 text-[10px] font-black text-indigo-300 uppercase tracking-widest text-center">Known</th>
+                        <th className="px-4 py-6 text-[10px] font-black text-indigo-300 uppercase tracking-widest text-center">Part Load</th>
+                        <th className="px-8 py-6 text-[11px] font-black text-emerald-400 uppercase tracking-[0.2em] text-right">GMV (T)</th>
+                        <th className="px-8 py-6 text-[11px] font-black text-rose-400 uppercase tracking-[0.2em] text-right">Margin (V)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {analytics.sortedByGMV.length > 0 ? (
+                        analytics.sortedByGMV.map((item) => (
+                          <tr key={item.name} className="hover:bg-white/10 transition-all duration-300 group">
+                            <td className="px-8 py-7">
+                              <span className="text-sm font-black text-white tracking-wide group-hover:text-indigo-300 transition-colors">{item.name}</span>
+                            </td>
+                            {/* Category Counts with glowing backgrounds */}
+                            <td className="px-4 py-7 text-center">
+                              <span className={`inline-flex items-center justify-center w-8 h-8 rounded-lg text-xs font-black ${item.commerce > 0 ? 'bg-indigo-500/40 text-white shadow-[0_0_12px_rgba(99,102,241,0.4)] border border-white/20' : 'text-white/20 border border-white/5'}`}>{item.commerce}</span>
+                            </td>
+                            <td className="px-4 py-7 text-center">
+                              <span className={`inline-flex items-center justify-center w-8 h-8 rounded-lg text-xs font-black ${item.capital > 0 ? 'bg-indigo-500/40 text-white shadow-[0_0_12px_rgba(99,102,241,0.4)] border border-white/20' : 'text-white/20 border border-white/5'}`}>{item.capital}</span>
+                            </td>
+                            <td className="px-4 py-7 text-center">
+                              <span className={`inline-flex items-center justify-center w-8 h-8 rounded-lg text-xs font-black ${item.known > 0 ? 'bg-indigo-500/40 text-white shadow-[0_0_12px_rgba(99,102,241,0.4)] border border-white/20' : 'text-white/20 border border-white/5'}`}>{item.known}</span>
+                            </td>
+                            <td className="px-4 py-7 text-center">
+                              <span className={`inline-flex items-center justify-center w-8 h-8 rounded-lg text-xs font-black ${item.partLoad > 0 ? 'bg-indigo-500/40 text-white shadow-[0_0_12px_rgba(99,102,241,0.4)] border border-white/20' : 'text-white/20 border border-white/5'}`}>{item.partLoad}</span>
+                            </td>
+                            {/* Financials with Monospace font for alignment */}
+                            <td className="px-8 py-7 text-right">
+                              <span className="font-mono font-black text-emerald-400 text-lg drop-shadow-[0_0_8px_rgba(52,211,153,0.4)]">
+                                {formatCurrency(item.gmv)}
+                              </span>
+                            </td>
+                            <td className="px-8 py-7 text-right">
+                              <span className="font-mono font-black text-rose-400 text-lg drop-shadow-[0_0_8px_rgba(251,113,133,0.4)]">
+                                {formatCurrency(item.margin)}
+                              </span>
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan="7" className="py-32 text-center">
+                             <div className="flex flex-col items-center justify-center text-indigo-300/40">
+                                <AlertCircle size={64} className="mb-4 opacity-20" />
+                                <p className="text-sm font-black uppercase tracking-[0.3em]">System Waiting for Data...</p>
+                             </div>
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+
+      <style dangerouslySetInnerHTML={{ __html: `
+        @keyframes nebula-float {
+          0%, 100% { transform: scale(1) translate(0, 0); opacity: 0.15; }
+          33% { transform: scale(1.1) translate(2%, 4%); opacity: 0.25; }
+          66% { transform: scale(0.9) translate(-4%, 2%); opacity: 0.1; }
+        }
+        .animate-nebula-slow { animation: nebula-float 20s ease-in-out infinite; }
+        .animate-nebula-medium { animation: nebula-float 15s ease-in-out infinite reverse; }
+        .animate-nebula-fast { animation: nebula-float 12s ease-in-out infinite; }
+        
+        .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; border: 2px solid transparent; background-clip: content-box; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); background-clip: content-box; }
+        
+        select option { background: #0f172a; color: white; }
+      `}} />
+    </div>
+  );
+};
+
+export default App;
