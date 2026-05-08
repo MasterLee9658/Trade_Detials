@@ -37,10 +37,10 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
         
-        // Icons Component Wrapper (Since we are in a browser environment)
+        // Icons Component Wrapper
         const Icon = ({ name, size = 20, className = "" }) => {
             useEffect(() => {
-                lucide.createIcons();
+                if (window.lucide) lucide.createIcons();
             }, [name, size, className]);
             return <i data-lucide={name} className={className} style={{ width: size, height: size }}></i>;
         };
@@ -94,8 +94,8 @@
                     const uniqueMonths = new Set();
                     const uniqueSupply = new Set();
                     parsedData.forEach(row => {
-                        uniqueMonths.add(row[`col_${COL.G}`]);
-                        uniqueSupply.add(row[`col_${COL.A}`]);
+                        if(row[`col_${COL.G}`]) uniqueMonths.add(row[`col_${COL.G}`]);
+                        if(row[`col_${COL.A}`]) uniqueSupply.add(row[`col_${COL.A}`]);
                     });
 
                     setDynamicMonths(['All', ...Array.from(uniqueMonths).sort()]);
@@ -118,19 +118,29 @@
             const analytics = useMemo(() => {
                 const groups = {};
                 filteredData.forEach(row => {
-                    const nameKey = row[`col_${COL.C}`] || 'Unknown';
+                    const nameKey = row[`col_${COL.C}`] || 'Unknown Entity';
                     const cat = (row[`col_${COL.AL}`] || '').toLowerCase();
                     const parseNum = (v) => parseFloat((v || '0').replace(/[^0-9.-]+/g, "")) || 0;
 
-                    if (!groups[nameKey]) groups[nameKey] = { name: nameKey, gmv: 0, margin: 0, commerce: 0, capital: 0, known: 0, partLoad: 0 };
+                    if (!groups[nameKey]) groups[nameKey] = { name: nameKey, gmv: 0, margin: 0, commerce: 0, capital: 0, known: 0, partLoad: 0, perfValue: 0 };
                     groups[nameKey].gmv += parseNum(row[`col_${COL.T}`]);
                     groups[nameKey].margin += parseNum(row[`col_${COL.V}`]);
+                    groups[nameKey].perfValue += parseNum(row[`col_${COL.K}`]); // Performance tracking based on Col K
+                    
                     if (cat.includes('commerce')) groups[nameKey].commerce++;
                     if (cat.includes('capital')) groups[nameKey].capital++;
                     if (cat.includes('known')) groups[nameKey].known++;
                     if (cat.includes('part load')) groups[nameKey].partLoad++;
                 });
-                return Object.values(groups).sort((a, b) => b.gmv - a.gmv);
+                
+                const sorted = Object.values(groups).sort((a, b) => b.gmv - a.gmv);
+                const perfSorted = [...Object.values(groups)].sort((a, b) => b.perfValue - a.perfValue);
+                
+                return {
+                    table: sorted,
+                    highPerf: perfSorted[0] || null,
+                    lowPerf: perfSorted[perfSorted.length - 1] || null
+                };
             }, [filteredData]);
 
             const formatCurrency = (num) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(num);
@@ -142,83 +152,122 @@
                     <aside className={`${isSidebarOpen ? 'w-64' : 'w-20'} bg-black/40 backdrop-blur-2xl border-r border-white/5 transition-all fixed h-full z-30`}>
                         <div className="p-6 flex items-center gap-3">
                             <div className="bg-indigo-500 p-2 rounded-lg"><Icon name="file-spreadsheet" /></div>
-                            {isSidebarOpen && <span className="font-bold text-xl">GMV Tracker</span>}
+                            {isSidebarOpen && <span className="font-bold text-xl tracking-tight">GMV Tracker</span>}
                         </div>
                         <nav className="p-4 space-y-2">
-                            <button onClick={() => setActiveTab('overview')} className={`w-full flex items-center gap-4 p-3 rounded-xl ${activeTab === 'overview' ? 'bg-white/20' : 'text-slate-400'}`}>
+                            <button onClick={() => setActiveTab('overview')} className={`w-full flex items-center gap-4 p-3 rounded-xl transition-colors ${activeTab === 'overview' ? 'bg-white/20' : 'text-slate-400 hover:text-white'}`}>
                                 <Icon name="table" /> {isSidebarOpen && "Data Table"}
                             </button>
-                            <button onClick={() => setActiveTab('reports')} className={`w-full flex items-center gap-4 p-3 rounded-xl ${activeTab === 'reports' ? 'bg-white/20' : 'text-slate-400'}`}>
+                            <button onClick={() => setActiveTab('reports')} className={`w-full flex items-center gap-4 p-3 rounded-xl transition-colors ${activeTab === 'reports' ? 'bg-white/20' : 'text-slate-400 hover:text-white'}`}>
                                 <Icon name="pie-chart" /> {isSidebarOpen && "Analytics"}
                             </button>
                         </nav>
                     </aside>
 
                     <main className={`flex-1 ${isSidebarOpen ? 'ml-64' : 'ml-20'} relative z-10 transition-all`}>
-                        <header className="bg-white/5 backdrop-blur-2xl border-b border-white/5 p-5 flex justify-between">
-                            <h1 className="text-lg font-black uppercase tracking-widest">{activeTab === 'overview' ? 'Records' : 'Performance'}</h1>
-                            <button onClick={fetchData} className="p-2 bg-white/10 rounded-xl hover:bg-white/20">
+                        <header className="bg-white/5 backdrop-blur-2xl border-b border-white/5 p-5 flex justify-between items-center">
+                            <h1 className="text-lg font-black uppercase tracking-widest">{activeTab === 'overview' ? 'Operational Records' : 'Performance Analytics'}</h1>
+                            <button onClick={fetchData} className="p-2 bg-white/10 rounded-xl hover:bg-white/20 transition-transform active:scale-95">
                                 <Icon name="refresh-cw" className={isRefreshing ? "animate-spin" : ""} />
                             </button>
                         </header>
 
                         <div className="p-8 space-y-6">
-                            <div className={`${glassStyle} p-4 rounded-2xl flex gap-4`}>
-                                <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="bg-white/5 p-2 rounded-lg outline-none border border-white/10">
-                                    {dynamicMonths.map(m => <option key={m} value={m}>{m}</option>)}
-                                </select>
-                                <select value={selectedSupply} onChange={e => setSelectedSupply(e.target.value)} className="bg-white/5 p-2 rounded-lg outline-none border border-white/10">
-                                    {dynamicSupplyValues.map(v => <option key={v} value={v}>{v}</option>)}
-                                </select>
+                            {/* Performance Cards based on Column K (as seen in your images) */}
+                            {activeTab === 'reports' && analytics.highPerf && (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                                    <div className={`${glassStyle} p-6 rounded-3xl relative overflow-hidden group`}>
+                                        <div className="flex items-center gap-4 mb-4">
+                                            <div className="p-3 bg-indigo-500/20 rounded-2xl text-indigo-400">
+                                                <Icon name="zap" size={24} />
+                                            </div>
+                                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-300">High Performance Logic (Col K)</span>
+                                        </div>
+                                        <div className="bg-indigo-500/10 px-3 py-1 rounded-lg inline-block text-[10px] font-black text-indigo-300 mb-4">RANK #1 (HIGHEST)</div>
+                                        <div className="text-[10px] uppercase text-white/40 mb-1">Name (Col C)</div>
+                                        <h2 className="text-2xl font-black mb-2">{analytics.highPerf.name}</h2>
+                                        <div className="text-3xl font-black text-indigo-400">{analytics.highPerf.perfValue} Units</div>
+                                        <Icon name="trophy" className="absolute -right-4 -bottom-4 opacity-5 group-hover:opacity-10 transition-opacity" size={120} />
+                                    </div>
+
+                                    <div className={`${glassStyle} p-6 rounded-3xl relative overflow-hidden group border-rose-500/20`}>
+                                        <div className="flex items-center gap-4 mb-4">
+                                            <div className="p-3 bg-rose-500/20 rounded-2xl text-rose-400">
+                                                <Icon name="activity" size={24} />
+                                            </div>
+                                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-rose-300">Low Performance Logic (Col K)</span>
+                                        </div>
+                                        <div className="bg-rose-500/10 px-3 py-1 rounded-lg inline-block text-[10px] font-black text-rose-300 mb-4">LAST RANK (LOWEST)</div>
+                                        <div className="text-[10px] uppercase text-white/40 mb-1">Name (Col C)</div>
+                                        <h2 className="text-2xl font-black mb-2">{analytics.lowPerf.name}</h2>
+                                        <div className="text-3xl font-black text-rose-400">{analytics.lowPerf.perfValue} Units</div>
+                                        <Icon name="target" className="absolute -right-4 -bottom-4 opacity-5 group-hover:opacity-10 transition-opacity" size={120} />
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className={`${glassStyle} p-4 rounded-2xl flex flex-wrap gap-4 items-center`}>
+                                <div className="flex items-center gap-2 px-3 py-2 bg-white/5 rounded-xl border border-white/10">
+                                    <span className="text-[10px] font-black text-indigo-300 uppercase">Month</span>
+                                    <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="bg-transparent text-sm font-bold outline-none cursor-pointer">
+                                        {dynamicMonths.map(m => <option key={m} value={m}>{m}</option>)}
+                                    </select>
+                                </div>
+                                <div className="flex items-center gap-2 px-3 py-2 bg-white/5 rounded-xl border border-white/10">
+                                    <span className="text-[10px] font-black text-indigo-300 uppercase">Supply</span>
+                                    <select value={selectedSupply} onChange={e => setSelectedSupply(e.target.value)} className="bg-transparent text-sm font-bold outline-none cursor-pointer">
+                                        {dynamicSupplyValues.map(v => <option key={v} value={v}>{v}</option>)}
+                                    </select>
+                                </div>
                             </div>
 
                             {activeTab === 'overview' ? (
                                 <div className={`${glassStyle} rounded-2xl overflow-hidden overflow-x-auto custom-scrollbar`}>
-                                    <table className="w-full text-left">
+                                    <table className="w-full text-left border-collapse">
                                         <thead className="bg-white/5">
-                                            <tr>{REQUESTED_COLUMNS.map(i => <th key={i} className="p-4 text-[11px] font-black text-indigo-200">{headers[i] || i}</th>)}</tr>
+                                            <tr>{REQUESTED_COLUMNS.map(i => <th key={i} className="p-4 text-[10px] font-black text-indigo-200 uppercase tracking-widest whitespace-nowrap">{headers[i] || `Col ${i}`}</th>)}</tr>
                                         </thead>
-                                        <tbody>
+                                        <tbody className="divide-y divide-white/5">
                                             {filteredData.map(row => (
-                                                <tr key={row.id} className="hover:bg-white/5 border-t border-white/5">
-                                                    {REQUESTED_COLUMNS.map(i => <td key={i} className="p-4 opacity-80">{row[`col_${i}`]}</td>)}
+                                                <tr key={row.id} className="hover:bg-white/5 transition-colors">
+                                                    {REQUESTED_COLUMNS.map(i => <td key={i} className="p-4 text-sm font-medium opacity-90 whitespace-nowrap">{row[`col_${i}`]}</td>)}
                                                 </tr>
                                             ))}
                                         </tbody>
                                     </table>
                                 </div>
                             ) : (
-                                <div className={`${glassStyle} rounded-3xl overflow-hidden overflow-x-auto`}>
+                                <div className={`${glassStyle} rounded-3xl overflow-hidden overflow-x-auto custom-scrollbar`}>
                                     <table className="w-full text-left">
                                         <thead className="bg-white/5 text-[10px] font-black text-indigo-300">
                                             <tr>
-                                                <th className="p-6">ENTITY</th>
+                                                <th className="p-6 tracking-widest">ENTITY NAME</th>
                                                 <th className="p-6 text-center">COMMERCE</th>
                                                 <th className="p-6 text-center">CAPITAL</th>
                                                 <th className="p-6 text-center">KNOWN</th>
                                                 <th className="p-6 text-center">PART LOAD</th>
-                                                <th className="p-6 text-right text-emerald-400">GMV</th>
-                                                <th className="p-6 text-right text-rose-400">MARGIN</th>
+                                                <th className="p-6 text-right text-emerald-400">GMV (COL T)</th>
+                                                <th className="p-6 text-right text-rose-400">MARGIN (COL V)</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-white/5">
-                                            {analytics.map(item => (
-                                                <tr key={item.name} className="hover:bg-white/10">
-                                                    <td className="p-6 font-black">{item.name}</td>
+                                            {analytics.table.map(item => (
+                                                <tr key={item.name} className="hover:bg-white/10 transition-colors">
+                                                    <td className="p-6 font-black text-sm">{item.name}</td>
                                                     <td className="p-6 text-center">
-                                                        <span className={`px-2 py-1 rounded ${item.commerce > 0 ? 'bg-indigo-500/30' : 'opacity-20'}`}>{item.commerce}</span>
+                                                        <span className={`inline-block w-8 h-8 leading-8 rounded-lg text-xs font-black ${item.commerce > 0 ? 'bg-indigo-500/40 text-white shadow-lg' : 'opacity-10 border border-white/20'}`}>{item.commerce}</span>
                                                     </td>
                                                     <td className="p-6 text-center">
-                                                        <span className={`px-2 py-1 rounded ${item.capital > 0 ? 'bg-indigo-500/30' : 'opacity-20'}`}>{item.capital}</span>
+                                                        <span className={`inline-block w-8 h-8 leading-8 rounded-lg text-xs font-black ${item.capital > 0 ? 'bg-indigo-500/40 text-white shadow-lg' : 'opacity-10 border border-white/20'}`}>{item.capital}</span>
                                                     </td>
                                                     <td className="p-6 text-center">
-                                                        <span className={`px-2 py-1 rounded ${item.known > 0 ? 'bg-indigo-500/30' : 'opacity-20'}`}>{item.known}</span>
+                                                        <span className={`inline-block w-8 h-8 leading-8 rounded-lg text-xs font-black ${item.known > 0 ? 'bg-indigo-500/40 text-white shadow-lg' : 'opacity-10 border border-white/20'}`}>{item.known}</span>
                                                     </td>
                                                     <td className="p-6 text-center">
-                                                        <span className={`px-2 py-1 rounded ${item.partLoad > 0 ? 'bg-indigo-500/30' : 'opacity-20'}`}>{item.partLoad}</span>
+                                                        <span className={`inline-block w-8 h-8 leading-8 rounded-lg text-xs font-black ${item.partLoad > 0 ? 'bg-indigo-500/40 text-white shadow-lg' : 'opacity-10 border border-white/20'}`}>{item.partLoad}</span>
                                                     </td>
-                                                    <td className="p-6 text-right font-mono text-emerald-400">{formatCurrency(item.gmv)}</td>
-                                                    <td className="p-6 text-right font-mono text-rose-400">{formatCurrency(item.margin)}</td>
+                                                    <td className="p-6 text-right font-mono text-emerald-400 font-bold">{formatCurrency(item.gmv)}</td>
+                                                    <td className="p-6 text-right font-mono text-rose-400 font-bold">{formatCurrency(item.margin)}</td>
                                                 </tr>
                                             ))}
                                         </tbody>
